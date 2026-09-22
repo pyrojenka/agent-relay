@@ -47,6 +47,10 @@ jobs:
   build-and-deploy:
     needs: test
     runs-on: ubuntu-latest
+    # This targets the kind cluster on the machine running the workflow, so
+    # it only makes sense locally via `act` (see README's Question 6). A push
+    # to a hosted GitHub runner has no such cluster to deploy to.
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -58,10 +62,12 @@ jobs:
 
       - name: Install kubectl and kind
         run: |
-          curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x /usr/local/bin/kubectl
-          curl -Lo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
-          chmod +x /usr/local/bin/kind
+          mkdir -p "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          curl -Lo "$HOME/.local/bin/kubectl" "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/.local/bin/kubectl"
+          curl -Lo "$HOME/.local/bin/kind" https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x "$HOME/.local/bin/kind"
 
       - name: Load image into kind
         run: kind load docker-image "$IMAGE_NAME:$TAG" --name "$KIND_CLUSTER"
