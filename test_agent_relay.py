@@ -152,6 +152,51 @@ def test_expiry_requeues_and_old_token_is_stale_before_recovery():
         assert second.json()["claim_token"] != first["claim_token"]
 
 
+def test_full_task_lifecycle_sender_recipient_flow():
+    """Acceptance scenario 1 from SPEC.md: register two agents, exchange a
+    task and its result, and confirm the sender sees the completed output."""
+    with TestClient(main.app) as client:
+        sender, sender_headers = register(client, "alice")
+        recipient, recipient_headers = register(client, "uppercase")
+
+        sent = client.post(
+            "/api/v1/tasks",
+            headers=sender_headers,
+            json={"to": recipient["agent_id"], "input": "hello world"},
+        )
+        assert sent.status_code == 201
+        task_id = sent.json()["task_id"]
+        assert sent.json()["status"] == "queued"
+
+        queued = client.get(f"/api/v1/tasks/{task_id}", headers=sender_headers)
+        assert queued.json()["status"] == "queued"
+
+        claimed = client.post(
+            "/api/v1/tasks/claim",
+            headers=recipient_headers,
+            json={"worker_id": "test-worker-1", "wait_seconds": 0},
+        )
+        assert claimed.status_code == 200
+        claim_token = claimed.json()["claim_token"]
+        assert claimed.json()["input"] == "hello world"
+
+        processing = client.get(f"/api/v1/tasks/{task_id}", headers=sender_headers)
+        assert processing.json()["status"] == "processing"
+
+        completed = client.post(
+            f"/api/v1/tasks/{task_id}/complete",
+            headers=recipient_headers,
+            json={"claim_token": claim_token, "output": "HELLO WORLD"},
+        )
+        assert completed.status_code == 200
+        assert completed.json()["status"] == "completed"
+
+        final = client.get(f"/api/v1/tasks/{task_id}", headers=sender_headers)
+        assert final.status_code == 200
+        assert final.json()["status"] == "completed"
+        assert final.json()["output"] == "HELLO WORLD"
+
+
 def test_dashboard_is_asset_and_invalid_input_is_documented_error():
     with TestClient(main.app) as client:
         page = client.get("/")

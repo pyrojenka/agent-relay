@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-relay-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-relay-api
+  template:
+    metadata:
+      labels:
+        app: agent-relay-api
+    spec:
+      containers:
+        - name: api
+          image: agent-relay:local
+          imagePullPolicy: Never # image is loaded straight into kind, not pulled from a registry
+          ports:
+            - containerPort: 8000
+          env:
+            - name: RELAY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: database-url
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10

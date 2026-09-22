@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  KIND_CLUSTER: agent-relay
+  IMAGE_NAME: agent-relay
+  DEPLOYMENT: agent-relay-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: relay
+          POSTGRES_PASSWORD: relay
+          POSTGRES_DB: agent_relay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relay -d agent_relay"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv sync
+
+      - name: Run tests against PostgreSQL
+        env:
+          RELAY_DATABASE_URL: postgresql+psycopg://relay:relay@localhost:5432/agent_relay
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv run pytest -q
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute a unique image tag
+        run: echo "TAG=$(date +%Y%m%d%H%M%S)-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Build image
+        run: docker build -t "$IMAGE_NAME:$TAG" .
+
+      - name: Install kubectl and kind
+        run: |
+          curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x /usr/local/bin/kubectl
+          curl -Lo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x /usr/local/bin/kind
+
+      - name: Load image into kind
+        run: kind load docker-image "$IMAGE_NAME:$TAG" --name "$KIND_CLUSTER"
+
+      - name: Point kubectl at the kind cluster
+        run: kind export kubeconfig --name "$KIND_CLUSTER"
+
+      - name: Deploy and wait for rollout
+        run: |
+          kubectl set image "deployment/$DEPLOYMENT" api="$IMAGE_NAME:$TAG"
+          kubectl rollout status "deployment/$DEPLOYMENT" --timeout=120s

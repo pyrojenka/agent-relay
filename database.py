@@ -134,6 +134,17 @@ def _is_sqlite(url: str) -> bool:
     return url.startswith("sqlite")
 
 
+def is_sqlite() -> bool:
+    """True when the configured engine is SQLite rather than PostgreSQL.
+
+    Storage code uses this to choose between SQLite's ``BEGIN IMMEDIATE``
+    writer-lock seam and PostgreSQL row locking (``SELECT ... FOR UPDATE``),
+    per the porting note in SPEC.md.
+    """
+
+    return _is_sqlite(DATABASE_URL)
+
+
 engine_kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
 if _is_sqlite(DATABASE_URL):
     engine_kwargs.update({"connect_args": {"check_same_thread": False, "timeout": 30}})
@@ -189,7 +200,11 @@ def immediate_transaction() -> Generator[Session, None, None]:
     connection = engine.connect()
     session = Session(bind=connection, expire_on_commit=False, autoflush=True)
     try:
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        if _is_sqlite(DATABASE_URL):
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        # PostgreSQL has no writer-lock statement to mirror: the transaction
+        # starts automatically on first use, and callers apply row locks
+        # (``SELECT ... FOR UPDATE``) on the specific rows they mutate.
         yield session
         session.flush()
         connection.commit()
@@ -257,6 +272,7 @@ __all__ = [
     "engine",
     "immediate_transaction",
     "init_db",
+    "is_sqlite",
     "iso_time",
     "recover_expired",
     "recover_expired_in_session",
